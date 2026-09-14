@@ -1,0 +1,355 @@
+/*
+ * 宿主侧场景预览与校验。
+ *
+ * 在宿主机上按与设备相同的横带模型渲染场景，输出一份 PPM 图，并对
+ * 关键像素做数值断言。用途：
+ *   1. 无需硬件即可检查场景的视觉正确性
+ *   2. 以数值方式验证场景是否完整覆盖每个带（未覆盖处保留哨兵值）
+ *
+ * 用法：preview <场景名> [输出.bmp]
+ * 场景名：selftest | solid | pattern | text | scroll | backlight
+ */
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "bsp_display.h"
+#include "gfx.h"
+#include "scenes.h"
+
+#define BAND_LINES 32
+#define BAND_COUNT (BSP_DISPLAY_HEIGHT / BAND_LINES)
+#define SENTINEL   0xDEAD
+
+static uint16_t s_screen[BSP_DISPLAY_WIDTH * BSP_DISPLAY_HEIGHT];
+static uint16_t s_band[BSP_DISPLAY_WIDTH * BAND_LINES];
+
+static int s_failures;
+
+static void render_scene(const demo_scene_t *scene)
+{
+    for (int i = 0; i < BAND_COUNT; i++) {
+        const int y = i * BAND_LINES;
+
+        /* 预填哨兵：场景未覆盖之处会保留哨兵值，可据此发现漏画。 */
+        for (int k = 0; k < BSP_DISPLAY_WIDTH * BAND_LINES; k++) {
+            s_band[k] = SENTINEL;
+        }
+
+        gfx_canvas_t canvas = gfx_canvas_strided(s_band, BSP_DISPLAY_WIDTH, BAND_LINES, BSP_DISPLAY_WIDTH);
+        scene->render_band(&canvas, y);
+
+        memcpy(&s_screen[y * BSP_DISPLAY_WIDTH], s_band, sizeof(s_band));
+    }
+}
+
+static uint16_t pixel(int x, int y)
+{
+    return s_screen[y * BSP_DISPLAY_WIDTH + x];
+}
+
+static int expect(const char *label, int x, int y, uint16_t expected)
+{
+    const uint16_t actual = pixel(x, y);
+    const int ok = actual == expected;
+    if (!ok) {
+        s_failures++;
+    }
+    printf("  %s  %-26s (%3d,%3d) 实际 0x%04X  期望 0x%04X\n", ok ? "OK  " : "FAIL", label, x, y, actual, expected);
+    return ok;
+}
+
+static void check_covered(const char *scene_name)
+{
+    int uncovered = 0;
+    for (int i = 0; i < BSP_DISPLAY_WIDTH * BSP_DISPLAY_HEIGHT; i++) {
+        if (s_screen[i] == SENTINEL) {
+            uncovered++;
+        }
+    }
+    printf("  %s  %-26s 未覆盖像素 %d\n", uncovered == 0 ? "OK  " : "FAIL", "整屏覆盖", uncovered);
+    if (uncovered != 0) {
+        s_failures++;
+    }
+    (void)scene_name;
+}
+
+/* 把画面按色相归类，用于无图像环境下的目视核对。 */
+static char classify(uint16_t panel_value)
+{
+    const uint16_t v = gfx_swap16(panel_value);
+    const int r = (v >> 11) & 0x1F;
+    const int g = (v >> 5) & 0x3F;
+    const int b = v & 0x1F;
+
+    const bool rh = r > 20, gh = g > 40, bh = b > 20;
+    const bool rl = r < 10, gl = g < 20, bl = b < 10;
+
+    if (rh && gh && bh) {
+        return 'W';
+    }
+    if (rh && gh && bl) {
+        return 'Y';
+    }
+    if (rl && gh && bh) {
+        return 'C';
+    }
+    if (rl && gh && bl) {
+        return 'G';
+    }
+    if (rh && gl && bh) {
+        return 'M';
+    }
+    if (rh && gl && bl) {
+        return 'R';
+    }
+    if (rl && gl && bh) {
+        return 'B';
+    }
+    if (rl && gl && bl) {
+        return 'K';
+    }
+    return '.';
+}
+
+/*
+ * 字符图：每个字符代表 CELL_W x CELL_H 像素块，取块中心采样。
+ * 图例：W 白 Y 黄 C 青 G 绿 M 品红 R 红 B 蓝 K 黑 . 其余
+ */
+static void print_ascii(void)
+{
+    const int cell_w = 8;
+    const int cell_h = 16;
+
+    printf("字符图（每字符 %dx%d 像素，取中心采样）：\n     ", cell_w, cell_h);
+    for (int x = 0; x < BSP_DISPLAY_WIDTH; x += cell_w * 10) {
+        printf("%-10d", x);
+    }
+    printf("\n");
+
+    for (int y = 0; y < BSP_DISPLAY_HEIGHT; y += cell_h) {
+        printf("%4d ", y);
+        for (int x = 0; x < BSP_DISPLAY_WIDTH; x += cell_w) {
+            putchar(classify(pixel(x + cell_w / 2, y + cell_h / 2)));
+        }
+        putchar('\n');
+    }
+}
+
+static void put_le16(uint8_t *p, unsigned value)
+{
+    p[0] = (uint8_t)(value & 0xFF);
+    p[1] = (uint8_t)((value >> 8) & 0xFF);
+}
+
+static void put_le32(uint8_t *p, unsigned long value)
+{
+    p[0] = (uint8_t)(value & 0xFF);
+    p[1] = (uint8_t)((value >> 8) & 0xFF);
+    p[2] = (uint8_t)((value >> 16) & 0xFF);
+    p[3] = (uint8_t)((value >> 24) & 0xFF);
+}
+
+/* 输出 24 位未压缩 BMP。画布中的值已按面板序交换，此处换回并展开为 888。 */
+static void write_bmp(const char *path)
+{
+    const int w = BSP_DISPLAY_WIDTH;
+    const int h = BSP_DISPLAY_HEIGHT;
+    const int row_bytes = ((w * 3) + 3) & ~3;
+    const int image_size = row_bytes * h;
+
+    uint8_t *row = malloc((size_t)row_bytes);
+    FILE *fp = fopen(path, "wb");
+    if (row == NULL || fp == NULL) {
+        fprintf(stderr, "无法写出 %s\n", path);
+        free(row);
+        if (fp != NULL) {
+            fclose(fp);
+        }
+        return;
+    }
+
+    uint8_t header[54] = {0};
+    header[0] = 'B';
+    header[1] = 'M';
+    put_le32(&header[2], (unsigned long)(54 + image_size));
+    put_le32(&header[10], 54);
+    put_le32(&header[14], 40);
+    put_le32(&header[18], (unsigned long)w);
+    put_le32(&header[22], (unsigned long)h);
+    put_le16(&header[26], 1);
+    put_le16(&header[28], 24);
+    put_le32(&header[34], (unsigned long)image_size);
+    put_le32(&header[38], 2835);
+    put_le32(&header[42], 2835);
+    fwrite(header, 1, sizeof(header), fp);
+
+    for (int y = h - 1; y >= 0; y--) {
+        memset(row, 0, (size_t)row_bytes);
+        for (int x = 0; x < w; x++) {
+            const uint16_t v = gfx_swap16(s_screen[y * w + x]);
+            const uint8_t r5 = (uint8_t)((v >> 11) & 0x1F);
+            const uint8_t g6 = (uint8_t)((v >> 5) & 0x3F);
+            const uint8_t b5 = (uint8_t)(v & 0x1F);
+            row[x * 3 + 0] = (uint8_t)((b5 << 3) | (b5 >> 2));
+            row[x * 3 + 1] = (uint8_t)((g6 << 2) | (g6 >> 4));
+            row[x * 3 + 2] = (uint8_t)((r5 << 3) | (r5 >> 2));
+        }
+        fwrite(row, 1, (size_t)row_bytes, fp);
+    }
+
+    fclose(fp);
+    free(row);
+    printf("已写出 %s（%dx%d，24 位 BMP）\n", path, w, h);
+}
+
+static void check_pattern(void)
+{
+    /* 与 scene_pattern.c 的布局常量一致。 */
+    enum { MARGIN = 8, CONTENT_X = MARGIN, CONTENT_W = BSP_DISPLAY_WIDTH - 2 * MARGIN, GAP = 8 };
+    enum { BARS_Y = 8, BARS_H = 224 };
+    enum { GRAY_Y = BARS_Y + BARS_H + GAP, GRAY_STEPS = 16, GRAY_H = 64 };
+    enum { STRIPE_Y = GRAY_Y + GRAY_H + GAP, STRIPE_H = 64, STRIPE_W = 4 };
+    enum { CHECK_Y = STRIPE_Y + STRIPE_H + GAP, CHECK_CELL = 8 };
+
+    const uint16_t navy = gfx_panel_color(0x10, 0x18, 0x40);
+    const uint16_t white = gfx_panel_color(0xFF, 0xFF, 0xFF);
+    const uint16_t black = gfx_panel_color(0x00, 0x00, 0x00);
+
+    static const struct {
+        const char *name;
+        uint8_t r;
+        uint8_t g;
+        uint8_t b;
+    } bars[] = {
+        {"bar0 白", 0xFF, 0xFF, 0xFF}, {"bar1 黄", 0xFF, 0xFF, 0x00}, {"bar2 青", 0x00, 0xFF, 0xFF},
+        {"bar3 绿", 0x00, 0xFF, 0x00}, {"bar4 品红", 0xFF, 0x00, 0xFF}, {"bar5 红", 0xFF, 0x00, 0x00},
+        {"bar6 蓝", 0x00, 0x00, 0xFF}, {"bar7 黑", 0x00, 0x00, 0x00},
+    };
+
+    /* 留白：四边与块间必须为背景色，区块不得触及屏幕边缘。 */
+    printf("pattern 留白（背景色应为深藏青）：\n");
+    expect("左上角 (0,0)", 0, 0, navy);
+    expect("右上角 (319,0)", BSP_DISPLAY_WIDTH - 1, 0, navy);
+    expect("左下角 (0,479)", 0, BSP_DISPLAY_HEIGHT - 1, navy);
+    expect("右下角 (319,479)", BSP_DISPLAY_WIDTH - 1, BSP_DISPLAY_HEIGHT - 1, navy);
+    expect("彩带与灰阶之间", 4, (BARS_Y + BARS_H + GAP / 2), navy);
+    expect("灰阶与条纹之间", 4, (GRAY_Y + GRAY_H + GAP / 2), navy);
+    expect("条纹与棋盘之间", 4, (STRIPE_Y + STRIPE_H + GAP / 2), navy);
+
+    /* 区块 1：彩带。 */
+    printf("pattern 区块 1 彩带（采样行 y=100）：\n");
+    {
+        const int bar_width = CONTENT_W / 8;
+        for (size_t i = 0; i < sizeof(bars) / sizeof(bars[0]); i++) {
+            const int x = CONTENT_X + (int)i * bar_width + bar_width / 2;
+            expect(bars[i].name, x, 100, gfx_panel_color(bars[i].r, bars[i].g, bars[i].b));
+        }
+    }
+
+    /* 区块 2：灰阶阶梯。每级内部取值一致，级间跃变。 */
+    printf("pattern 区块 2 灰阶阶梯（采样行 y=272）：\n");
+    {
+        const int step_width = CONTENT_W / GRAY_STEPS;
+        int errors = 0;
+        for (int i = 0; i < GRAY_STEPS; i++) {
+            const uint8_t v = (uint8_t)(i * 255 / (GRAY_STEPS - 1));
+            const int x = CONTENT_X + i * step_width + step_width / 2;
+            if (pixel(x, 272) != gfx_panel_color(v, v, v)) {
+                errors++;
+            }
+        }
+        printf("  %s  %d 级灰阶\n", errors == 0 ? "OK  " : "FAIL", GRAY_STEPS);
+        if (errors != 0) {
+            s_failures++;
+        }
+    }
+
+    /* 区块 3：对齐条纹。奇数族与偶数族必须严格交替。 */
+    printf("pattern 区块 3 对齐条纹（采样行 y=344）：\n");
+    {
+        int errors = 0;
+        for (int x = 0; x < CONTENT_W; x += STRIPE_W) {
+            const uint16_t want = ((x / STRIPE_W) % 2) == 0 ? white : black;
+            if (pixel(CONTENT_X + x, 344) != want || pixel(CONTENT_X + x + STRIPE_W - 1, 344) != want) {
+                errors++;
+            }
+        }
+        printf("  %s  %d 族条纹两端取值一致\n", errors == 0 ? "OK  " : "FAIL", CONTENT_W / STRIPE_W);
+        if (errors != 0) {
+            s_failures++;
+        }
+    }
+
+    /* 区块 4：棋盘。相邻格必须相反。 */
+    printf("pattern 区块 4 棋盘（采样行 y=384 与 y=392）：\n");
+    {
+        int errors = 0;
+        for (int x = 0; x < CONTENT_W; x += CHECK_CELL) {
+            const bool row0_on = ((x / CHECK_CELL) + 0) % 2 == 0;
+            const bool row1_on = ((x / CHECK_CELL) + 1) % 2 == 0;
+            if (pixel(CONTENT_X + x + 1, CHECK_Y + 1) != (row0_on ? white : black)) {
+                errors++;
+            }
+            if (pixel(CONTENT_X + x + 1, CHECK_Y + CHECK_CELL + 1) != (row1_on ? white : black)) {
+                errors++;
+            }
+        }
+        printf("  %s  %d 格，相邻行反相\n", errors == 0 ? "OK  " : "FAIL", CONTENT_W / CHECK_CELL);
+        if (errors != 0) {
+            s_failures++;
+        }
+    }
+}
+
+int main(int argc, char **argv)
+{
+    if (argc < 2) {
+        fprintf(stderr, "用法：preview <场景名> [输出.bmp]\n");
+        return 2;
+    }
+
+    const char *name = argv[1];
+    const demo_scene_t *scene = NULL;
+
+    if (strcmp(name, "orient") == 0) {
+        scene = &scene_orient;
+    } else if (strcmp(name, "selftest") == 0) {
+        scene = &scene_selftest;
+    } else if (strcmp(name, "solid") == 0) {
+        scene = &scene_solid;
+    } else if (strcmp(name, "pattern") == 0) {
+        scene = &scene_pattern;
+    } else if (strcmp(name, "edge") == 0) {
+        scene = &scene_edge;
+    } else if (strcmp(name, "text") == 0) {
+        scene = &scene_text;
+    } else if (strcmp(name, "scroll") == 0) {
+        scene = &scene_scroll;
+    } else if (strcmp(name, "backlight") == 0) {
+        scene = &scene_backlight;
+    } else {
+        fprintf(stderr, "未知场景：%s\n", name);
+        return 2;
+    }
+
+    if (scene->enter != NULL) {
+        scene->enter();
+    }
+    memset(s_screen, 0, sizeof(s_screen));
+    render_scene(scene);
+
+    if (strcmp(name, "pattern") == 0) {
+        check_pattern();
+    }
+    check_covered(name);
+    print_ascii();
+
+    if (argc >= 3) {
+        write_bmp(argv[2]);
+    }
+
+    printf("%s：%d 项失败\n", name, s_failures);
+    return s_failures == 0 ? 0 : 1;
+}

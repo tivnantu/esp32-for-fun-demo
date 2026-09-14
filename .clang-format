@@ -1,0 +1,12 @@
+# 与 ESP-IDF 官方风格对齐：LLVM 基础 + 4 空格缩进。
+BasedOnStyle: LLVM
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 120
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+AllowShortLoopsOnASingleLine: false
+BreakBeforeBraces: Attach
+SortIncludes: false
+PointerAlignment: Right

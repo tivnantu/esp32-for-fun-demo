@@ -1,0 +1,8 @@
+# 打开全部可选子系统。
+# 用途：与默认配置一同构建，使未验证子系统的代码也进入编译检查。
+# 用法：idf.py -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/all-subsystems.defaults" build
+CONFIG_BSP_ENABLE_TOUCH=y
+CONFIG_BSP_ENABLE_RGB=y
+CONFIG_BSP_ENABLE_BATTERY=y
+CONFIG_BSP_ENABLE_SDCARD=y
+CONFIG_BSP_ENABLE_AUDIO=y

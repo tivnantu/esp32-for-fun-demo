@@ -1,0 +1,24 @@
+# ESP-IDF 构建产物
+build/
+build-all/
+managed_components/
+sdkconfig
+sdkconfig.old
+sdkconfig.all
+sdkconfig.all.old
+
+# 工具生成
+compile_commands.json
+.clangd/
+
+# 宿主侧测试
+components/gfx/test/build/
+
+# 操作系统与编辑器
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
