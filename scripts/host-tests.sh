@@ -12,6 +12,27 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD="${HOST_BUILD_DIR:-${TMPDIR:-/tmp}/esp32-for-fun-demo-host}"
 
+# 宿主侧测试使用宿主编译器，因此必须把 ESP-IDF 的交叉工具链从 PATH 中剥离。
+# 激活 ESP-IDF 后 PATH 里存在交叉汇编器（as），宿主的 cc 会通过 PATH 找到它
+# 并以 --64 参数调用，于是编译简单测试程序都会失败：
+#   as: unrecognized option '--64'
+# 本脚本可能在已激活 ESP-IDF 的 shell 中运行（scripts/check.sh 就是如此），
+# 因此这里显式只保留宿主侧工具目录。
+_old_ifs="$IFS"
+IFS=':'
+HOST_PATH=""
+for _entry in $PATH; do
+    case "$_entry" in
+    # 保留 ESP-IDF 提供的宿主侧工具。
+    */.espressif/tools/cmake/* | */.espressif/tools/ninja/* | */.espressif/tools/python/*) ;;
+    # 丢弃其余 ESP-IDF 工具目录，它们都是交叉工具链。
+    */.espressif/tools/*) continue ;;
+    esac
+    HOST_PATH="${HOST_PATH:+$HOST_PATH:}$_entry"
+done
+IFS="$_old_ifs"
+export PATH="$HOST_PATH"
+
 command -v cmake >/dev/null 2>&1 || {
     echo "错误：未找到 cmake。" >&2
     exit 1
