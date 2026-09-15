@@ -7,7 +7,7 @@ CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # 可选子系统默认关闭，交付二进制只含已验证路径。
 # 打开方式：idf.py menuconfig → 板级支持（ES3C35P）→ 可选子系统
-# 全部打开后仍应能通过构建，见 scripts/check.sh 的双配置构建。
+# 全部打开后仍应能通过构建，见 scripts/check.sh 的三套配置构建。
 CONFIG_BSP_ENABLE_TOUCH=n
 CONFIG_BSP_ENABLE_RGB=n
 CONFIG_BSP_ENABLE_BATTERY=n

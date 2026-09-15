@@ -399,9 +399,20 @@ static void check_orient(void)
     printf("orient 坐标轴：\n");
     expect("X 轴在 y=240 为红", 64, cy, red);
     expect("Y 轴在 x=160 为绿", cx, 64, green);
-    /* 箭头指出正方向：+X 向右、+Y 向下。 */
-    expect("+X 箭头在右侧", BSP_DISPLAY_WIDTH - 8, cy, red);
-    expect("+Y 箭头在下方", cx, BSP_DISPLAY_HEIGHT - 8, green);
+
+    /*
+     * 箭头沿正方向逐行收窄，因此必须在收窄段上采样，并同时验证其外侧
+     * 不再是箭头色。只采轴线所在行列无法区分"有箭头"与"只有轴线"：
+     * 两条轴都贯穿全屏，其行列上的任何点都是轴色。
+     *
+     * 偏移 8 像素处箭头长度为 16：X 箭头覆盖 x 292..307（行 cy-8），
+     * Y 箭头覆盖 y 452..467（列 cx-8）。采样点同时避开角块与文字标注。
+     */
+    const uint16_t navy = gfx_panel_color(0x10, 0x18, 0x40);
+    expect("X 箭头收窄段内", 294, cy - 8, red);
+    expect("X 箭头收窄段外", 310, cy - 8, navy);
+    expect("Y 箭头收窄段内", cx - 8, 456, green);
+    expect("Y 箭头收窄段外", cx - 8, 470, navy);
 }
 
 /* text：居中块的列范围必须与 4 像素对齐的计算一致。 */
