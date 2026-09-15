@@ -78,10 +78,11 @@ esp_err_t bsp_battery_read_mv(int *out_mv)
     if (s_cali_valid) {
         ESP_RETURN_ON_ERROR(adc_cali_raw_to_voltage(s_cali, raw_avg, &pin_mv), TAG, "ADC 换算失败");
     } else {
-        /* 无校准方案时按 12 位满量程与 12 dB 衰减的标称上限换算。 */
-        pin_mv = (int)(((int64_t)raw_avg * 3100 * BATTERY_DIVIDER_NUMERATOR) / 4095);
+        /* 无校准方案时按 12 位满量程与 12 dB 衰减的标称上限换算，得到引脚电压。 */
+        pin_mv = (int)(((int64_t)raw_avg * 3100) / 4095);
     }
 
+    /* 分压比在此处施加，且仅施加一次。 */
     *out_mv = pin_mv * BATTERY_DIVIDER_NUMERATOR;
     return ESP_OK;
 }

@@ -19,13 +19,18 @@ typedef struct {
     uint8_t blue;
 } rgb_step_t;
 
-/* WS2812B 单色满亮对应分量 255；此处逐档递增以便看清通道顺序。 */
+/*
+ * WS2812B 单色满亮对应分量 255。
+ *
+ * 名称限用 ASCII：字形表只覆盖 0x00–0x7F，非 ASCII 字节会被掩码成
+ * 无关字形（见 gfx_draw_glyph）。
+ */
 static const rgb_step_t kSteps[] = {
-    {"红", 255, 0, 0},
-    {"绿", 0, 255, 0},
-    {"蓝", 0, 0, 255},
-    {"白", 255, 255, 255},
-    {"灭", 0, 0, 0},
+    {"red", 255, 0, 0},
+    {"green", 0, 255, 0},
+    {"blue", 0, 0, 255},
+    {"white", 255, 255, 255},
+    {"off", 0, 0, 0},
 };
 #define STEP_COUNT (sizeof(kSteps) / sizeof(kSteps[0]))
 

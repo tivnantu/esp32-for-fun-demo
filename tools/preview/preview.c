@@ -1,7 +1,7 @@
 /*
  * 宿主侧场景预览与校验。
  *
- * 在宿主机上按与设备相同的横带模型渲染场景，输出一份 PPM 图，并对
+ * 在宿主机上按与设备相同的横带模型渲染场景，输出一份 24 位 BMP 图，并对
  * 关键像素做数值断言。用途：
  *   1. 无需硬件即可检查场景的视觉正确性
  *   2. 以数值方式验证场景是否完整覆盖每个带（未覆盖处保留哨兵值）
@@ -15,8 +15,12 @@
 #include <string.h>
 
 #include "bsp_display.h"
+#include "bsp_stub.h"
 #include "gfx.h"
 #include "scenes.h"
+
+/* 与 scene_text.c 的 MESSAGE 一致。该宏是场景的私有定义，此处按值对齐。 */
+#define MESSAGE_FOR_CHECK "Hello World"
 
 #define BAND_LINES 32
 #define BAND_COUNT (BSP_DISPLAY_HEIGHT / BAND_LINES)
@@ -303,10 +307,209 @@ static void check_pattern(void)
     }
 }
 
+/* ---------- 场景不变量 ---------- */
+
+/*
+ * edge：逐条验证硬边存在且交替相位正确。
+ *
+ * 这个检查针对一个真实的失效模式：kEdges 若未按 y 升序，相邻间隔会变成
+ * 负高度而被跳过，交替相位随之错开，但整屏仍被涂满——只做覆盖校验发现不了。
+ */
+static void check_edge(void)
+{
+    enum { MARKER_WIDTH = 44 };
+    static const int edges[] = {32, 96, 100, 160, 200, 300};
+    const size_t count = sizeof(edges) / sizeof(edges[0]);
+    const uint16_t white = gfx_panel_color(0xFF, 0xFF, 0xFF);
+    const uint16_t black = gfx_panel_color(0x00, 0x00, 0x00);
+    const uint16_t marker = gfx_panel_color(0xFF, 0x00, 0x00);
+
+    /*
+     * 探针列取在短标与文字标签之外：短标占 x<44，标签自 x=48 起、
+     * 每个字符 8 像素、最多 9 字符，故 x≥128 必然干净。
+     */
+    const int probe_x = 200;
+
+    printf("edge 硬边（探针列 x=%d）：\n", probe_x);
+    int missing = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (pixel(probe_x, edges[i] - 1) == pixel(probe_x, edges[i])) {
+            printf("  FAIL  y=%d 上下同色，硬边不存在\n", edges[i]);
+            missing++;
+        }
+    }
+    printf("  %s  %zu 条硬边均存在\n", missing == 0 ? "OK  " : "FAIL", count);
+    if (missing != 0) {
+        s_failures++;
+    }
+
+    /* 交替相位：首段为黑，每越过一条边翻转一次。 */
+    printf("edge 交替相位：\n");
+    int phase = 0;
+    int top = 0;
+    bool bright = false;
+    for (size_t i = 0; i <= count; i++) {
+        const int bottom = (i < count) ? edges[i] : BSP_DISPLAY_HEIGHT;
+        if (bottom > top) {
+            const uint16_t want = bright ? white : black;
+            if (pixel(probe_x, top + (bottom - top) / 2) != want) {
+                phase++;
+            }
+            top = bottom;
+        }
+        bright = !bright;
+    }
+    printf("  %s  %zu 段相位与交替顺序一致\n", phase == 0 ? "OK  " : "FAIL", count + 1);
+    if (phase != 0) {
+        s_failures++;
+    }
+
+    /* 每条边应有红色短标，且在标注位置有文字。 */
+    int markers = 0;
+    for (size_t i = 0; i < count; i++) {
+        if (pixel(MARKER_WIDTH / 2, edges[i] - 1) != marker) {
+            markers++;
+        }
+    }
+    printf("  %s  %zu 条红色短标\n", markers == 0 ? "OK  " : "FAIL", count);
+    if (markers != 0) {
+        s_failures++;
+    }
+}
+
+/* orient：四角色块与两条坐标轴的方向。 */
+static void check_orient(void)
+{
+    enum { CORNER = 48 };
+    const uint16_t white = gfx_panel_color(0xFF, 0xFF, 0xFF);
+    const uint16_t red = gfx_panel_color(0xFF, 0x00, 0x00);
+    const uint16_t green = gfx_panel_color(0x00, 0xFF, 0x00);
+
+    const int cx = BSP_DISPLAY_WIDTH / 2;
+    const int cy = BSP_DISPLAY_HEIGHT / 2;
+    /* 采样点取在角块内部、但避开角标字母的绘制范围。 */
+    const int in = CORNER - 8;
+
+    printf("orient 角块（避开角标字母）：\n");
+    expect("左上 A 白", in, in, white);
+    expect("右上 B 黄", BSP_DISPLAY_WIDTH - 1 - in, in, gfx_panel_color(0xFF, 0xFF, 0x00));
+    expect("左下 C 青", in, BSP_DISPLAY_HEIGHT - 1 - in, gfx_panel_color(0x00, 0xFF, 0xFF));
+    expect("右下 D 蓝", BSP_DISPLAY_WIDTH - 1 - in, BSP_DISPLAY_HEIGHT - 1 - in, gfx_panel_color(0x00, 0x00, 0xFF));
+
+    printf("orient 坐标轴：\n");
+    expect("X 轴在 y=240 为红", 64, cy, red);
+    expect("Y 轴在 x=160 为绿", cx, 64, green);
+    /* 箭头指出正方向：+X 向右、+Y 向下。 */
+    expect("+X 箭头在右侧", BSP_DISPLAY_WIDTH - 8, cy, red);
+    expect("+Y 箭头在下方", cx, BSP_DISPLAY_HEIGHT - 8, green);
+}
+
+/* text：居中块的列范围必须与 4 像素对齐的计算一致。 */
+static void check_text(void)
+{
+    const uint16_t bg = gfx_panel_color(0x10, 0x18, 0x40);
+    const uint16_t fg = gfx_panel_color(0xFF, 0xFF, 0xFF);
+
+    /* 与 scene_text.c 的布局一致：居中行 y=168，scale 3。 */
+    enum { CENTER_Y = 168, SCALE = 3 };
+    const int width = gfx_text_width(MESSAGE_FOR_CHECK, SCALE);
+    const int x0 = (BSP_DISPLAY_WIDTH - width) / 2;
+    const int x1 = x0 + width;
+
+    printf("text 居中（行 %d，scale %d）：\n", CENTER_Y, SCALE);
+
+    int outside = 0;
+    for (int x = 0; x < x0; x++) {
+        if (pixel(x, CENTER_Y + gfx_glyph_size(SCALE) / 2) != bg) {
+            outside++;
+        }
+    }
+    printf("  %s  居中块左侧 %d 列无墨迹\n", outside == 0 ? "OK  " : "FAIL", x0);
+    if (outside != 0) {
+        s_failures++;
+    }
+
+    expect("居中块首列有墨迹", x0, CENTER_Y + 1, fg);
+
+    const int align_ok = (x0 % 4 == 0) && (x1 % 4 == 0);
+    printf("  %s  列范围 %d..%d 均为 4 的倍数\n", align_ok ? "OK  " : "FAIL", x0, x1);
+    if (!align_ok) {
+        s_failures++;
+    }
+}
+
+/*
+ * 帧推进：同一场景在 0 帧与若干帧之后的画面必须不同。
+ *
+ * 这条检查覆盖 frame() 状态机：若状态不推进、或推进后不反映到画面，
+ * 动画场景就是死的。
+ */
+static uint64_t render_fingerprint(const demo_scene_t *scene, int frames)
+{
+    if (scene->enter != NULL) {
+        scene->enter();
+    }
+    for (int i = 0; i < frames; i++) {
+        if (scene->frame != NULL) {
+            scene->frame();
+        }
+    }
+    render_scene(scene);
+
+    uint64_t hash = 1469598103934665603ULL;
+    for (int i = 0; i < BSP_DISPLAY_WIDTH * BSP_DISPLAY_HEIGHT; i++) {
+        hash ^= s_screen[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+static void check_frame_advances(const demo_scene_t *scene)
+{
+    /*
+     * 帧数取 1 与 13。不能用 24 这类可能与状态机周期成整数倍的帧数：
+     * 纯色场景的颜色数若为 8，推进 24 帧恰好回到原值，画面相同。
+     * 1 与 13 对 5、8、120、200 这些常见周期都不同余于 0。
+     */
+    static const int probes[] = {1, 13};
+    const uint64_t at_zero = render_fingerprint(scene, 0);
+
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        const int n = probes[i];
+        const uint64_t at_n = render_fingerprint(scene, n);
+        const int ok = at_zero != at_n;
+        printf("  %s  %-26s 0 帧与 %d 帧画面%s\n", ok ? "OK  " : "FAIL", "帧推进", n, ok ? "不同" : "相同");
+        if (!ok) {
+            s_failures++;
+        }
+    }
+}
+
+/* exit：离开场景时必须还原它改动的硬件状态。 */
+static void check_exit_restores(const demo_scene_t *scene)
+{
+    if (scene->exit == NULL) {
+        printf("  --    退出还原                      该场景无 exit 钩子\n");
+        return;
+    }
+    stub_backlight_reset();
+    scene->exit();
+
+    const int last = stub_backlight_last_percent();
+    const int ok = (last == 100);
+    printf("  %s  %-26s 退出后背光 %d%%\n", ok ? "OK  " : "FAIL", "退出还原背光", last);
+    if (!ok) {
+        s_failures++;
+    }
+}
+
 int main(int argc, char **argv)
 {
-    if (argc < 2) {
-        fprintf(stderr, "用法：preview <场景名> [输出.bmp]\n");
+    if (argc < 2 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0) {
+        fprintf(stderr,
+                "用法：preview <场景名> [输出.bmp] [帧数]\n"
+                "  场景名：orient | selftest | solid | pattern | edge | text | scroll | backlight\n"
+                "  帧数  ：先推进多少次 frame() 再渲染，用于检查动画状态机，缺省 0\n");
         return 2;
     }
 
@@ -334,16 +537,60 @@ int main(int argc, char **argv)
         return 2;
     }
 
+    const int frames = (argc >= 4) ? atoi(argv[3]) : 0;
+
     if (scene->enter != NULL) {
         scene->enter();
+    }
+    for (int i = 0; i < frames; i++) {
+        if (scene->frame != NULL) {
+            scene->frame();
+        }
     }
     memset(s_screen, 0, sizeof(s_screen));
     render_scene(scene);
 
+    printf("== %s（帧数 %d）==\n", name, frames);
+
+    /* 通用：整屏必须被场景完整覆盖。 */
+    check_covered(name);
+
+    if (scene->animated) {
+        check_frame_advances(scene);
+        /* 上面的调用会推进状态，重新渲染出用于输出的画面。 */
+        if (scene->enter != NULL) {
+            scene->enter();
+        }
+        for (int i = 0; i < frames; i++) {
+            if (scene->frame != NULL) {
+                scene->frame();
+            }
+        }
+        render_scene(scene);
+    }
+
     if (strcmp(name, "pattern") == 0) {
         check_pattern();
+    } else if (strcmp(name, "edge") == 0) {
+        check_edge();
+    } else if (strcmp(name, "orient") == 0) {
+        check_orient();
+    } else if (strcmp(name, "text") == 0) {
+        check_text();
     }
-    check_covered(name);
+
+    /* 离开场景必须还原硬件状态。 */
+    check_exit_restores(scene);
+    if (scene->enter != NULL) {
+        scene->enter();
+    }
+    for (int i = 0; i < frames; i++) {
+        if (scene->frame != NULL) {
+            scene->frame();
+        }
+    }
+    render_scene(scene);
+
     print_ascii();
 
     if (argc >= 3) {

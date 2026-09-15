@@ -27,6 +27,8 @@ static i2s_chan_handle_t s_tx;
 static esp_codec_dev_handle_t s_codec;
 /* 编解码是否处于打开状态。打开时功放使能，关闭时静音并禁用功放。 */
 static bool s_opened;
+/* 资源创建是否已尝试过。无论成败都不再重试，避免重复分配。 */
+static bool s_create_attempted;
 static int16_t s_sine[AUDIO_SINE_SIZE];
 
 static void audio_fill_sine_table(void)
@@ -164,14 +166,21 @@ static esp_err_t audio_open(void)
 
 esp_err_t bsp_audio_init(void)
 {
-    /* 每一步各自判断状态，失败后重试不会重复创建已有资源。 */
-    if (s_tx == NULL) {
+    /*
+     * 资源创建只尝试一次。编解码器缺失是硬件事实，不会因重试而出现；
+     * 而创建路径会分配对象（I2C 控制接口、I2S 数据接口、编解码设备），
+     * 每次进入音频场景都重试会造成持续泄漏。
+     */
+    if (!s_create_attempted) {
+        s_create_attempted = true;
         audio_fill_sine_table();
         ESP_RETURN_ON_ERROR(audio_setup_i2s(), TAG, "I2S 初始化失败");
-    }
-    if (s_codec == NULL) {
         ESP_RETURN_ON_ERROR(audio_setup_codec(), TAG, "编解码初始化失败");
     }
+    if (s_tx == NULL || s_codec == NULL) {
+        return ESP_ERR_NOT_FOUND;
+    }
+
     if (!s_opened) {
         ESP_RETURN_ON_ERROR(audio_open(), TAG, "编解码打开失败");
         ESP_RETURN_ON_ERROR(bsp_audio_set_volume(70), TAG, "音量设置失败");

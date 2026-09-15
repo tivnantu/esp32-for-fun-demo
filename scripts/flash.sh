@@ -57,17 +57,25 @@ for artifact in "$OUT/bootloader/bootloader.bin" "$OUT/partition_table/partition
     fi
 done
 
-# 分区表约定的偏移：引导程序 0x0，分区表 0x8000，出厂应用 0x10000。
-ESPTOOL_PY="$HOME/.espressif/tools/python/v5.5.4/venv/bin/python"
+# 解析 esptool 的调用方式。
+#
+# 与 scripts/build.sh 同样的理由：Espressif 安装管理器的激活脚本把 esptool.py
+# 定义成含点号的 shell 函数，bash 不把这类函数名传给子进程。改用可继承的
+# IDF_PYTHON_ENV_PATH，避免把 IDF 版本号固化进脚本。
 if command -v esptool.py >/dev/null 2>&1; then
     ESPTOOL=(esptool.py)
-elif [[ -x "$ESPTOOL_PY" ]]; then
-    ESPTOOL=("$ESPTOOL_PY" -m esptool)
+elif [[ -n "${IDF_PYTHON_ENV_PATH:-}" && -x "$IDF_PYTHON_ENV_PATH/bin/python" ]]; then
+    ESPTOOL=("$IDF_PYTHON_ENV_PATH/bin/python" -m esptool)
+elif command -v python3 >/dev/null 2>&1; then
+    ESPTOOL=(python3 -m esptool)
 else
     echo "错误：未找到 esptool。" >&2
+    echo "请先激活 ESP-IDF 环境，例如：" >&2
+    echo "  source <esp-idf 安装目录>/export.sh" >&2
     exit 1
 fi
 
+# 分区表约定的偏移：引导程序 0x0，分区表 0x8000，出厂应用 0x10000。
 "${ESPTOOL[@]}" \
     --chip esp32s3 -b "$BAUD" --before default_reset --after hard_reset -p "$PORT" \
     write_flash --flash_mode dio --flash_size 16MB --flash_freq 80m \

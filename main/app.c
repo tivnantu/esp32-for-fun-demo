@@ -51,7 +51,7 @@ static const demo_scene_t *const s_scenes[] = {
 #if CONFIG_BSP_ENABLE_AUDIO
     &scene_audio,
 #endif
-#if CONFIG_BSP_ENABLE_BATTERY || CONFIG_BSP_ENABLE_SDCARD
+#if CONFIG_BSP_ENABLE_STATUS_SCENE
     &scene_status,
 #endif
 };
@@ -189,10 +189,24 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "esp32-for-fun-demo 启动");
 
+    /*
+     * 屏初始化单独计时并以验收判据的形式报告。
+     *
+     * 不能整个 bsp_init() 计时后当作屏初始化耗时：bsp_init() 还包含可选
+     * 子系统的初始化，其中触摸有两段固定 100 ms 复位延时，MicroSD 在无卡
+     * 时也要走一次挂载尝试。在全子系统配置下这些会把总耗时推过 300 ms，
+     * 使日志出现一条看似违反判据的记录，而屏本身是达标的。
+     * bsp_display_init() 幂等，故此处先单独调用一次。
+     */
+    const int64_t display_start = esp_timer_get_time();
+    ESP_ERROR_CHECK(bsp_display_init());
+    const int64_t display_us = esp_timer_get_time() - display_start;
+    ESP_LOGI(TAG, "屏初始化耗时 %lld ms（验收判据 ≤300 ms）", display_us / 1000);
+
     const int64_t init_start = esp_timer_get_time();
     ESP_ERROR_CHECK(bsp_init());
     const int64_t init_us = esp_timer_get_time() - init_start;
-    ESP_LOGI(TAG, "屏初始化耗时 %lld ms（验收判据 ≤300 ms）", init_us / 1000);
+    ESP_LOGI(TAG, "其余子系统初始化耗时 %lld ms", (init_us - display_us) / 1000);
 
     ESP_ERROR_CHECK(bsp_backlight_set(true));
 

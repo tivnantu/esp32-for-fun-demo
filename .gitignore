@@ -1,11 +1,14 @@
 # ESP-IDF 构建产物
 build/
 build-all/
+build-mixed/
 managed_components/
 sdkconfig
 sdkconfig.old
 sdkconfig.all
 sdkconfig.all.old
+sdkconfig.mixed
+sdkconfig.mixed.old
 
 # 工具生成
 compile_commands.json

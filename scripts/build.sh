@@ -5,9 +5,11 @@
 # 用法：
 #   scripts/build.sh            构建出厂配置（全部可选子系统关闭）
 #   scripts/build.sh --all      构建打开了全部可选子系统的配置
+#   scripts/build.sh --mixed    构建混合配置（touch 与 sdcard 单独开启）
 #
-# 两套配置缺一不可。可选子系统在关闭时不参与编译，只有 --all 能保证
-# 它们始终处于可编译状态，避免长期搁置后失效。
+# 三套配置的用途：
+#   --all 与出厂配置覆盖门控的两个角，保证被关闭的代码始终可编译；
+#   --mixed 让复合门控条件各由单侧开启满足，覆盖两个角之间的组合。
 
 set -euo pipefail
 
@@ -41,11 +43,19 @@ BUILD_DIR="build"
 SDKCONFIG="sdkconfig"
 DEFAULTS="sdkconfig.defaults"
 
-if [[ "${1:-}" == "--all" ]]; then
+case "${1:-}" in
+--all)
     BUILD_DIR="build-all"
     SDKCONFIG="sdkconfig.all"
     DEFAULTS="sdkconfig.defaults;configs/all-subsystems.defaults"
     shift
-fi
+    ;;
+--mixed)
+    BUILD_DIR="build-mixed"
+    SDKCONFIG="sdkconfig.mixed"
+    DEFAULTS="sdkconfig.defaults;configs/mixed.defaults"
+    shift
+    ;;
+esac
 
 exec "${IDF_CMD[@]}" -B "$BUILD_DIR" -D SDKCONFIG="$SDKCONFIG" -D SDKCONFIG_DEFAULTS="$DEFAULTS" build "$@"

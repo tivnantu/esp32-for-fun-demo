@@ -20,9 +20,24 @@
 #include "gfx.h"
 #include "scenes.h"
 
-/* 前三个为 32 的整数倍（推送边界），后三个不是。 */
-static const int kEdges[] = {32, 96, 160, 100, 200, 300};
-static const bool kOnBandBoundary[] = {true, true, true, false, false, false};
+/*
+ * 边位置与是否落在推送边界（32 的整数倍）上。
+ *
+ * 数组必须按 y 升序：下方填充逻辑把相邻两条边之间交替涂成黑/白，
+ * 依赖 kEdges 单调递增。乱序会让相邻间隔变成负高度而被跳过，
+ * 交替相位也随之错开，整个诊断场景失效。
+ */
+static const struct {
+    int y;
+    bool on_band_boundary;
+} kEdges[] = {
+    {32, true},
+    {96, true},
+    {100, false},
+    {160, true},
+    {200, false},
+    {300, false},
+};
 #define EDGE_COUNT (sizeof(kEdges) / sizeof(kEdges[0]))
 
 #define MARKER_WIDTH 44
@@ -37,7 +52,7 @@ static void render_band(gfx_canvas_t *canvas, int band_y)
     bool bright = false;
 
     for (size_t i = 0; i < EDGE_COUNT; i++) {
-        const int bottom = kEdges[i];
+        const int bottom = kEdges[i].y;
         if (bottom > top) {
             scene_fill_abs(canvas, band_y, 0, top, BSP_DISPLAY_WIDTH, bottom - top, bright ? white : black);
         }
@@ -50,11 +65,11 @@ static void render_band(gfx_canvas_t *canvas, int band_y)
 
     /* 每条边上放红色短标，并标注 y 值与是否落在推送边界。 */
     for (size_t i = 0; i < EDGE_COUNT; i++) {
-        const int y = kEdges[i];
+        const int y = kEdges[i].y;
         scene_fill_abs(canvas, band_y, 0, y - 1, MARKER_WIDTH, 2, marker);
 
         char label[24];
-        snprintf(label, sizeof(label), "y=%d %s", y, kOnBandBoundary[i] ? "BND" : "mid");
+        snprintf(label, sizeof(label), "y=%d %s", y, kEdges[i].on_band_boundary ? "BND" : "mid");
         scene_text_abs(canvas, band_y, MARKER_WIDTH + 4, y - 4, label, 1, marker);
     }
 }

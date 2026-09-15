@@ -10,7 +10,7 @@
 #include "bsp_display.h"
 #include "bsp_key.h"
 
-#if CONFIG_BSP_ENABLE_TOUCH || CONFIG_BSP_ENABLE_AUDIO
+#if CONFIG_BSP_ENABLE_I2C_BUS
 #include "bsp_i2c.h"
 #endif
 

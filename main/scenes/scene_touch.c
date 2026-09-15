@@ -36,13 +36,11 @@ static void render_band(gfx_canvas_t *canvas, int band_y)
 
     scene_fill_abs(canvas, band_y, 0, 0, BSP_DISPLAY_WIDTH, BSP_DISPLAY_HEIGHT, bg);
 
-    if (scene_visible(canvas, band_y, 0, BSP_DISPLAY_HEIGHT)) {
-        for (int x = 0; x < BSP_DISPLAY_WIDTH; x += GRID_STEP) {
-            scene_fill_abs(canvas, band_y, x, 0, 1, BSP_DISPLAY_HEIGHT, grid);
-        }
-        for (int y = 0; y < BSP_DISPLAY_HEIGHT; y += GRID_STEP) {
-            scene_fill_abs(canvas, band_y, 0, y, BSP_DISPLAY_WIDTH, 1, grid);
-        }
+    for (int x = 0; x < BSP_DISPLAY_WIDTH; x += GRID_STEP) {
+        scene_fill_abs(canvas, band_y, x, 0, 1, BSP_DISPLAY_HEIGHT, grid);
+    }
+    for (int y = 0; y < BSP_DISPLAY_HEIGHT; y += GRID_STEP) {
+        scene_fill_abs(canvas, band_y, 0, y, BSP_DISPLAY_WIDTH, 1, grid);
     }
 
     char line[32];

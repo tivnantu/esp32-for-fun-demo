@@ -101,6 +101,6 @@ extern const demo_scene_t scene_rgb;
 extern const demo_scene_t scene_audio;
 #endif
 
-#if CONFIG_BSP_ENABLE_BATTERY || CONFIG_BSP_ENABLE_SDCARD
+#if CONFIG_BSP_ENABLE_STATUS_SCENE
 extern const demo_scene_t scene_status;
 #endif

@@ -1,0 +1,15 @@
+# 混合配置：单独开启触摸与 MicroSD，音频与电池关闭。
+#
+# 用途：出厂配置（全关）与 all-subsystems（全开）只覆盖门控的两个角，
+# 无法发现复合条件下的漏改。本配置让两个派生符号各自由单侧开启：
+#   BSP_ENABLE_I2C_BUS     仅由 BSP_ENABLE_TOUCH 满足
+#   BSP_ENABLE_STATUS_SCENE 仅由 BSP_ENABLE_SDCARD 满足
+#
+# 用法：
+#   idf.py -B build-mixed -D SDKCONFIG=sdkconfig.mixed \
+#          -D SDKCONFIG_DEFAULTS="sdkconfig.defaults;configs/mixed.defaults" build
+CONFIG_BSP_ENABLE_TOUCH=y
+CONFIG_BSP_ENABLE_RGB=n
+CONFIG_BSP_ENABLE_AUDIO=n
+CONFIG_BSP_ENABLE_BATTERY=n
+CONFIG_BSP_ENABLE_SDCARD=y

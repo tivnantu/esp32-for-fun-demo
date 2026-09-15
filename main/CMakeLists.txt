@@ -23,7 +23,7 @@ if(CONFIG_BSP_ENABLE_AUDIO)
     list(APPEND scene_srcs "scenes/scene_audio.c")
 endif()
 
-if(CONFIG_BSP_ENABLE_BATTERY OR CONFIG_BSP_ENABLE_SDCARD)
+if(CONFIG_BSP_ENABLE_STATUS_SCENE)
     list(APPEND scene_srcs "scenes/scene_status.c")
 endif()
 

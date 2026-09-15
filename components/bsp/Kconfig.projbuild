@@ -220,6 +220,23 @@ menu "板级支持（ES3C35P）"
             depends on BSP_ENABLE_SDCARD
             default 3
 
+        # 派生符号：把"任一开启即需要"的条件收敛到一处。
+        # 这些条件原先在 CMake 与 C 侧各写一遍，改一处漏一处不会编译失败，
+        # 而会让场景静默消失或总线不被初始化。
+        config BSP_ENABLE_I2C_BUS
+            bool
+            default y
+            depends on BSP_ENABLE_TOUCH || BSP_ENABLE_AUDIO
+            help
+                I2C 总线由触摸控制器与音频编解码共用，任一开启即需要。
+
+        config BSP_ENABLE_STATUS_SCENE
+            bool
+            default y
+            depends on BSP_ENABLE_BATTERY || BSP_ENABLE_SDCARD
+            help
+                status 场景展示电池电压与存储挂载，任一开启即需要。
+
     endmenu
 
 endmenu

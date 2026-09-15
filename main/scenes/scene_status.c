@@ -67,7 +67,7 @@ static void render_band(gfx_canvas_t *canvas, int band_y)
 
 #if CONFIG_BSP_ENABLE_BATTERY
     scene_text_abs(canvas, band_y, 8, 80, "battery  ADC1_CH7 / IO8  2:1 divider", 1, dim);
-    scene_text_abs(canvas, band_y, 8, 96, "USB powered without a cell: reads the system rail", 1, dim);
+    scene_text_abs(canvas, band_y, 8, 96, "USB power, no cell: reads system rail", 1, dim);
     if (s_battery_mv > 0) {
         snprintf(line, sizeof(line), "%d.%02d V", s_battery_mv / 1000, (s_battery_mv % 1000) / 10);
         scene_text_abs(canvas, band_y, 8, 104, line, 3, accent);

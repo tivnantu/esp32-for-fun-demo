@@ -2,7 +2,7 @@
  * gfx 宿主侧单元测试。
  *
  * 不依赖 ESP-IDF、不依赖目标硬件，在本机编译执行。
- * 运行方式：scripts/run-host-tests.sh
+ * 运行方式：scripts/host-tests.sh
  */
 
 #include <stdio.h>
@@ -162,6 +162,75 @@ static void test_text_metrics(void)
     CHECK_EQ(gfx_glyph_size(0), 0);
 }
 
+/*
+ * 字形渲染契约。
+ *
+ * 断言针对渲染约定本身，而不是整张字形表：位 0 为最左列、字节 0 为顶行、
+ * 每行只取低 7 位。位序或行序若被反转，下列断言必然失败。
+ *
+ * 取值来自字形表中 'L'（U+004C）的位图：
+ *   { 0x0F, 0x06, 0x06, 0x06, 0x46, 0x66, 0x7F, 0x00 }
+ * 以及空格（U+0020）的全零位图。
+ */
+static void test_glyph_bit_order(void)
+{
+    static uint16_t pixels[16 * 16];
+
+    struct probe {
+        int x;
+        int y;
+        int lit;
+        const char *what;
+    };
+    const struct probe probes[] = {
+        /* 行 6 = 0x7F：低 7 位全置，位 7 为空。 */
+        {0, 6, 1, "行 6 位 0 = 最左列"},
+        {6, 6, 1, "行 6 位 6"},
+        {7, 6, 0, "行 6 位 7 不越读"},
+        /* 行 1 = 0x06：只有位 1、2 置。 */
+        {0, 1, 0, "行 1 位 0"},
+        {1, 1, 1, "行 1 位 1"},
+        {2, 1, 1, "行 1 位 2"},
+        {3, 1, 0, "行 1 位 3"},
+        /* 行 0 有墨、行 7 全空：字节顺序自顶向下。 */
+        {0, 0, 1, "行 0 位 0"},
+        {0, 7, 0, "行 7 为空"},
+    };
+
+    for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); i++) {
+        gfx_canvas_t canvas = gfx_canvas_tight(pixels, 16, 16);
+        gfx_fill(&canvas, 0x0000);
+        gfx_draw_glyph(&canvas, 0, 0, 'L', 1, 0xFFFF);
+        CHECK_EQ(pixels[(size_t)probes[i].y * 16 + (size_t)probes[i].x], probes[i].lit ? 0xFFFF : 0x0000);
+    }
+
+    /* 空格无墨迹。 */
+    {
+        gfx_canvas_t canvas = gfx_canvas_tight(pixels, 16, 16);
+        gfx_fill(&canvas, 0x0000);
+        gfx_draw_glyph(&canvas, 0, 0, ' ', 1, 0xFFFF);
+        int lit = 0;
+        for (int i = 0; i < 16 * 16; i++) {
+            if (pixels[i] != 0x0000) {
+                lit++;
+            }
+        }
+        CHECK_EQ(lit, 0);
+    }
+
+    /* 放大 N 倍时，同一字形像素占 NxN 个画布像素：行 6 在 y=18，列 0..2 在 x=18..20。 */
+    {
+        enum { S = 32 };
+        static uint16_t big[S * S];
+        gfx_canvas_t canvas = gfx_canvas_tight(big, S, S);
+        gfx_fill(&canvas, 0x0000);
+        gfx_draw_glyph(&canvas, 0, 0, 'L', 3, 0xFFFF);
+        CHECK_EQ(big[18 * S + 0], 0xFFFF);
+        CHECK_EQ(big[18 * S + 18], 0xFFFF);
+        CHECK_EQ(big[18 * S + 21], 0x0000);
+    }
+}
+
 static void test_text_draws_pixels(void)
 {
     static uint16_t pixels[64 * 32];
@@ -180,6 +249,47 @@ static void test_text_draws_pixels(void)
 
     /* 放大 3 倍后每个字形像素占 9 个画布像素，亮点数须为 9 的倍数。 */
     CHECK_EQ(lit % 9, 0);
+}
+
+/* 相邻字形不同、且落在各自的步进位：若步进或取模有误，两者会重合。 */
+static void test_glyphs_differ(void)
+{
+    enum { W = 32, H = 8 };
+    static uint16_t a[W * H];
+    static uint16_t b[W * H];
+
+    gfx_canvas_t ca = gfx_canvas_tight(a, W, H);
+    gfx_canvas_t cb = gfx_canvas_tight(b, W, H);
+    gfx_fill(&ca, 0x0000);
+    gfx_fill(&cb, 0x0000);
+    gfx_draw_glyph(&ca, 0, 0, 'A', 1, 0xFFFF);
+    gfx_draw_glyph(&cb, 8, 0, 'A', 1, 0xFFFF);
+
+    int same = 1;
+    for (int i = 0; i < W * H; i++) {
+        if (a[i] != b[i]) {
+            same = 0;
+            break;
+        }
+    }
+    /* 步进 8 像素，同一字形后移一列后不可能与原地完全相同。 */
+    CHECK_EQ(same, 0);
+
+    /* 非 ASCII 字节按低 7 位取字形，不得越界。 */
+    gfx_canvas_t cc = gfx_canvas_tight(a, W, H);
+    gfx_fill(&cc, 0x0000);
+    gfx_draw_glyph(&cc, 0, 0, (char)0xE7, 1, 0xFFFF);
+    gfx_canvas_t cd = gfx_canvas_tight(b, W, H);
+    gfx_fill(&cd, 0x0000);
+    gfx_draw_glyph(&cd, 0, 0, (char)0x67, 1, 0xFFFF);
+    int equal = 1;
+    for (int i = 0; i < W * H; i++) {
+        if (a[i] != b[i]) {
+            equal = 0;
+            break;
+        }
+    }
+    CHECK_EQ(equal, 1);
 }
 
 /*
@@ -288,7 +398,9 @@ int main(void)
     test_clip();
     test_fill();
     test_text_metrics();
+    test_glyph_bit_order();
     test_text_draws_pixels();
+    test_glyphs_differ();
     test_strided_canvas();
     test_stride_contract();
     test_no_out_of_bounds_writes();

@@ -60,11 +60,20 @@ void gfx_vline(gfx_canvas_t *canvas, int x, int y, int h, uint16_t color);
 
 /* ---- 字形与文本 ---- */
 
-/* 字形单元边长（像素）。8x8 位图字体，scale 为整数放大倍数。 */
+/*
+ * 字形单元边长（像素）。8x8 位图字体，scale 为整数放大倍数。
+ *
+ * 字形表只覆盖 ASCII 0x00–0x7F。超出该范围的字节会被掩码到低 7 位并渲染
+ * 成无关字形，因此传入的文本必须是 ASCII。
+ */
 int gfx_glyph_size(int scale);
 int gfx_text_width(const char *text, int scale);
 int gfx_text_height(int scale);
 
+/*
+ * 绘制文本。超出画布的部分被静默裁掉：不换行、不报错、不返回失败。
+ * 调用方须自行保证 x + gfx_text_width(text, scale) 不超出画布宽度。
+ */
 void gfx_draw_glyph(gfx_canvas_t *canvas, int x, int y, char ch, int scale, uint16_t color);
 void gfx_draw_text(gfx_canvas_t *canvas, int x, int y, const char *text, int scale, uint16_t color);
 

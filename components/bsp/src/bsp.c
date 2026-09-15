@@ -27,7 +27,7 @@ esp_err_t bsp_init(void)
     ESP_RETURN_ON_ERROR(bsp_backlight_init(), TAG, "背光初始化失败");
     ESP_RETURN_ON_ERROR(bsp_key_init(), TAG, "按键初始化失败");
 
-#if CONFIG_BSP_ENABLE_TOUCH || CONFIG_BSP_ENABLE_AUDIO
+#if CONFIG_BSP_ENABLE_I2C_BUS
     /* I2C 总线为触摸与音频共用，属于必需项。 */
     ESP_RETURN_ON_ERROR(bsp_i2c_init(), TAG, "I2C 总线初始化失败");
 #endif
